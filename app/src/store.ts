@@ -10,7 +10,7 @@ export type Modal = null | 'createBot' | 'createGroup' | 'settings' | 'search' |
 
 const emptyWorkspace: Workspace = { path: '', remote: '', branches: [], commits: [], tree: [], folders: [], dirty: 0 }
 const emptyQuota: Quota = { known: false, fiveHour: { pct: 0, resetsAt: 0 }, sevenDay: { pct: 0, resetsAt: 0 } }
-const emptySettings: Settings = { fullAccess: true, computerUse: false, claudeInChrome: false, maxParallel: 3, pauseAtPct: 90, maxChainDepth: 2, handoffPair: 3, handoffTotal: 10, handoffWindow: 10, allCooldown: 10 }
+const emptySettings: Settings = { fullAccess: true, computerUse: false, claudeInChrome: false, maxParallel: 3, pauseAtPct: 90, pauseAtPct5h: 0, maxChainDepth: 2, handoffPair: 3, handoffTotal: 10, handoffWindow: 10, allCooldown: 10 }
 
 // Время последнего прочтения хранится в браузере: непрочитанное считает клиент
 const LR_KEY = 'clawds.lastRead'
