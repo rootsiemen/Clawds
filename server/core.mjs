@@ -1,11 +1,14 @@
 // Ядро Clawds: состояние, команды, оркестрация ботов. Источник правды находится здесь.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, rmSync, copyFileSync, realpathSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, rmSync, copyFileSync, realpathSync } from 'node:fs'
 import { join, dirname, basename, resolve, sep, extname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomBytes, createHash } from 'node:crypto'
 import { COLORS, autoNumber, usernameRule, cronMatches, MODELS, EFFORTS, supportsEffort } from './lib/rules.mjs'
 import { runClaude, runOnce } from './lib/runner.mjs'
 import { tr, setLang, getLang } from './lib/locale.mjs'
+import { createMcpStore, createSkillStore, seedBuiltins, parseMcpText, readMcpSource, scanMcp, scanSkills, syncBotSkills, testServer, toClaudeEntry, parseSkillMd } from './lib/tools.mjs'
+import { parseChats } from './lib/chatimport.mjs'
+import { homedir, tmpdir } from 'node:os'
 import { createStore, fetchModels, envFor, parseEp, isEp } from './lib/providers.mjs'
 import { spawn } from 'node:child_process'
 import { ensureRepo, workspaceInfo, setRemote, ensureWorktree, removeWorktree, deleteBranches, isGitRepo } from './lib/git.mjs'
@@ -44,6 +47,12 @@ for (const d of [DATA, CONFIG_DIR]) mkdirSync(d, { recursive: true })
 /* ---------- Подключения: вход в Claude и свои эндпоинты (ключи лежат только на сервере) ---------- */
 
 const PROV = createStore(join(DATA, 'providers.json'))
+// Сторонние MCP-серверы и навыки: общие для всех сессий, включаются отдельным ботам
+const MCP = createMcpStore(join(DATA, 'mcp.json'))
+const SKILLS = createSkillStore(join(DATA, 'skills'))
+seedBuiltins(SKILLS, join(ROOT, 'server', 'skills'))
+export const toolsInfo = () => ({ t: 'tools', mcp: MCP.view(), skills: SKILLS.view() })
+const emitTools = () => emit(toolsInfo())
 // Модель бота: алиас Claude или ep:<эндпоинт>:<id>. Для второго находим эндпоинт и флаг упрощённого режима.
 function resolveModel(m) {
   const e = parseEp(m)
@@ -56,7 +65,19 @@ const validModel = (m) => MODELS.includes(m) || !!resolveModel(m)
 const claudeLoggedIn = () => {
   try { return !!JSON.parse(readFileSync(join(CONFIG_DIR, '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken } catch { return false }
 }
+// Отпечаток файла входа: вход считается завершённым, только когда файл изменился (старый вход не в счёт)
+const credStamp = () => { try { const st = statSync(join(CONFIG_DIR, '.credentials.json')); return st.mtimeMs + ':' + st.size } catch { return '' } }
 let loginWatch = null
+// Лёгкая модель для разовых запросов (Haiku по подписке, без входа любая модель своего эндпоинта)
+function lightRunOpts() {
+  const opts = { cwd: DATA, configDir: CONFIG_DIR, model: 'haiku' }
+  if (claudeLoggedIn()) return opts
+  const p = PROV.list().find((x) => x.models.length)
+  if (!p) err(tr('Нужен вход в Claude или свой эндпоинт: откройте «Подключения»'))
+  const m = p.models.find((x) => /haiku|mini|flash|small/i.test(x.id)) ?? p.models[0]
+  return { ...opts, model: m.id, env: envFor(p, m.id) }
+}
+let chatCache = null // последний разобранный файл переписок (чтобы не пересылать его с клиента ещё раз)
 export const connInfo = () => ({ t: 'conn', loggedIn: claudeLoggedIn(), pending: !!loginWatch, providers: PROV.view() })
 const emitConn = () => emit(connInfo())
 
@@ -258,7 +279,7 @@ async function openSession(id) {
   if (S.quota?.known && !quota.known) quota = S.quota // прежняя установка хранила квоту в состоянии
   delete S.quota
   for (const x of Object.values(S.accounts)) { delete x.balance; delete x.hearts; delete x.premium } // сердец и магазина больше нет
-  for (const b of S.bots) { ensureBotFiles(b); b.effort ??= 'default'; b.boss ??= b.id === 'lead' }
+  for (const b of S.bots) { ensureBotFiles(b); b.effort ??= 'default'; b.boss ??= b.id === 'lead'; b.mcp ??= []; b.skills ??= [] }
   ensureSharedRules()
   // Сообщения, прерванные падением сервера, помечаем завершёнными
   for (const m of S.messages) if (m.streaming) { m.streaming = false; m.error = true; m.text = (m.text ? m.text + '\n\n' : '') + tr('Прервано: сервер был остановлен.') }
@@ -462,14 +483,17 @@ function buildPrompt(b, ch, job, lite = false) {
     : job.tier === 1 ? PR.taskLine('tier1')
     : fromBot ? PR.taskLine('bot', { who, username: acc(job.from).username })
     : PR.taskLine('human', { who })
+  const askedNote = job.trigger || job.text ? skillMentions(job.trigger?.text ?? job.text ?? '').map((n) => '\nПРОСЯТ ПРИМЕНИТЬ НАВЫК /' + n + ': прочитай .claude/skills/' + n + '/SKILL.md в своей папке и следуй ему в этой задаче.').join('') : ''
+  const skillsLine = (b.skills ?? []).filter((n) => SKILLS.exists(n)).map((n) => n + ' (' + (SKILLS.get(n)?.description || '').slice(0, 140) + ')').join('; ')
+  const skillsNote = skillsLine ? '\nНавыки (инструкции в .claude/skills/<имя>/SKILL.md в твоей папке, прочитай нужный, когда задача подходит): ' + skillsLine : ''
   if (lite) {
     const rosterLite = S.bots.filter((x) => x.id !== b.id).map((x) => '@' + acc(x.id).username).join(', ')
     const headLite = langLine() + '\n' + PR.liteHead(botInfo(b), where, rosterLite, task)
-    return job.trigger ? headLite + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : headLite
+    return job.trigger ? headLite + skillsNote + askedNote + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : headLite + skillsNote + askedNote
   }
   // Динамические сведения кладём в сам запуск: системная инструкция у возобновляемой сессии (--resume) не обновляется
   const head = '[Clawds. Сейчас ' + new Date().toLocaleString(getLang() === 'en' ? 'en-US' : 'ru-RU') + ']\n' + langLine() + '\n' + PR.identityLines(botInfo(b)).join('\n') + '\nГде ты: ' + where + '\nДругие боты: ' + (roster || 'нет') + '\nЧТО ОТ ТЕБЯ НУЖНО: ' + task
-  return job.trigger ? head + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : head
+  return job.trigger ? head + askedNote + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : head + askedNote
 }
 
 const systemAppend = (b) => PR.systemAppend(botInfo(b))
@@ -559,14 +583,19 @@ async function doRun(b, ch, job) {
   const rm = resolveModel(b.model)
   const lite = !!rm?.lite // упрощённый режим выбирается отдельно для каждой модели эндпоинта
   const epEnv = rm ? envFor(rm.provider, rm.id) : {}
+  // Сторонние MCP: включённые боту и помеченные «всем ботам». Навыки раскладываются в .claude/skills папки бота.
+  const extMcp = {}
+  for (const x of MCP.list()) if (x.allBots || (b.mcp ?? []).includes(x.id)) extMcp[x.id] = toClaudeEntry(x)
+  const asked = skillMentions(job.trigger?.text ?? job.text ?? '')
+  const botSkills = (() => { try { return syncBotSkills(SKILLS, botDir(b.id), [...new Set([...(b.skills ?? []), ...asked])]) } catch (e) { console.error('навыки:', e.message); return [] } })()
   const { promise, kill } = runClaude(
     {
       cwd: botDir(b.id), configDir: CONFIG_DIR, model: rm ? rm.id : (isEp(b.model) ? parseEp(b.model)?.id : b.model), effort: !isEp(b.model) && b.effort && b.effort !== 'default' && supportsEffort(b.model) ? b.effort : undefined,
       prompt: buildPrompt(b, ch, job, lite), systemAppend: lite ? PR.systemAppendLite(botInfo(b), readFile(join(botDir(b.id), 'CLAUDE.md'))) : systemAppend(b),
       addDirs: [WORKSPACE, ...S.folders], permissionMode: S.settings.fullAccess ? 'bypassPermissions' : 'acceptEdits',
       chrome: !!S.settings.claudeInChrome && !lite, sessionId: S.sessions[b.id], tools: lite ? 'Read,Write,Edit,Bash,Glob,Grep' : undefined,
-      mcpConfig: { mcpServers: { clawds: { command: process.execPath, args: [MCP_FILE], env: { CLAWDS_API: API, CLAWDS_TOKEN: token, ...(lite ? { CLAWDS_LITE: '1' } : {}) } } } },
-      env: { CLAWDS_API: API, CLAWDS_BOT: b.id, CLAWDS_TOKEN: token, ENABLE_TOOL_SEARCH: 'false', ...(lite ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' } : {}), ...epEnv }, // инструменты Clawds сразу в контексте, без ToolSearch
+      mcpConfig: { mcpServers: { ...extMcp, clawds: { command: process.execPath, args: [MCP_FILE], env: { CLAWDS_API: API, CLAWDS_TOKEN: token, ...(lite ? { CLAWDS_LITE: '1' } : {}) } } } },
+      env: { CLAWDS_API: API, CLAWDS_BOT: b.id, CLAWDS_TOKEN: token, ENABLE_TOOL_SEARCH: Object.keys(extMcp).length ? 'auto' : 'false', ...(lite ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' } : {}), ...epEnv }, // инструменты Clawds сразу в контексте, без ToolSearch
     },
     {
       session: (sid) => { if (S.sessions[b.id] !== sid) { S.sessions[b.id] = sid; persist() } },
@@ -621,6 +650,7 @@ async function doRun(b, ch, job) {
       emit({ t: 'del', key: 'messages', id: msg.id })
     }
   }
+  if (!silent && !msg.error) msg.refs = computeRefs(msg.text, b.id)
   if (!silent || msg.tools?.length) putMsg(msg)
   setTyping(ch.id, b.id, false)
   release()
@@ -675,6 +705,60 @@ function attachFromPaths(paths) {
   return { attachments: out, bad }
 }
 
+/* ---------- Файлы в сообщениях и навыки по «/имени» ---------- */
+
+const TEXT_EXT = new Set(['.txt', '.md', '.mdx', '.json', '.jsonl', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.css', '.scss', '.html', '.htm', '.xml', '.svg', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.env.example', '.py', '.rb', '.go', '.rs', '.java', '.kt', '.c', '.h', '.cpp', '.hpp', '.cs', '.php', '.sh', '.bat', '.cmd', '.ps1', '.sql', '.csv', '.tsv', '.log', '.diff', '.patch', '.gitignore', '.lock', '.vue', '.svelte', '.lua', '.swift'])
+const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico'])
+const fileKind = (p) => { const e = extname(p).toLowerCase(); return IMG_EXT.has(e) ? 'image' : TEXT_EXT.has(e) || !e ? 'text' : 'binary' }
+
+// Файл можно показывать, если он внутри проекта, папок ботов, вложений или добавленных папок и не служебный
+function readableFile(p) {
+  if (!existsSync(p)) return null
+  const real = realpathSync(p)
+  const st = statSync(real)
+  if (!st.isFile()) return null
+  const roots = [WORKSPACE, BOTS, UPLOADS, ...S.folders].filter((r) => r && existsSync(r))
+  if (!roots.some((r) => inside(real, realpathSync(r)))) return null
+  const parts = lower(real).split(sep)
+  if (parts.includes('.git') || parts.includes('claude-config') || basename(real).toLowerCase() === 'state.json' || basename(real) === '.credentials.json') return null
+  return { real, size: st.size }
+}
+
+// Путь из сообщения: относительный считаем от рабочей папки автора, потом от проекта и папки бота. «:42» в конце это строка.
+function resolveFileRef(ref, authorId) {
+  const m = /^(.*?)(?::(\d{1,6}))?(?::\d{1,4})?$/.exec(String(ref).trim())
+  const raw = m?.[1] ?? ''
+  if (!raw || raw.length > 260 || /:\/\/|[<>|*?"]/.test(raw) || /^\s|\s$/.test(raw)) return null
+  const b = bot(authorId)
+  const bases = [b ? workDir(b) : null, WORKSPACE, b ? botDir(b.id) : null, BOTS, UPLOADS, ...S.folders].filter(Boolean)
+  const cands = /^([A-Za-z]:[\\/]|[\\/])/.test(raw) ? [raw] : bases.map((base) => join(base, raw))
+  for (const c of cands) {
+    try { const f = readableFile(c); if (f) return { ...f, line: m?.[2] ? Number(m[2]) : 0 } } catch { /* следующий вариант */ }
+  }
+  return null
+}
+
+// Пути в `обратных кавычках`, которые указывают на существующие файлы, помечаем кликабельными
+function computeRefs(text, authorId) {
+  const refs = {}
+  let n = 0
+  for (const m of String(text ?? '').matchAll(/`([^`\n]{2,260})`/g)) {
+    const ref = m[1].trim()
+    if (refs[ref] || n >= 30) continue
+    if (!/[\\/]|\.[A-Za-z0-9]{1,8}(:\d+)*$/.test(ref)) continue // похоже на путь: есть слэш или расширение
+    const f = resolveFileRef(ref, authorId)
+    if (f) { refs[ref] = { kind: fileKind(f.real), size: f.size }; n++ }
+  }
+  return n ? refs : undefined
+}
+
+// «/code-review» в тексте: просят применить навык (кроме /all)
+function skillMentions(text) {
+  const out = []
+  for (const m of String(text ?? '').matchAll(/(?<![\w/`])\/([a-z][a-z0-9_-]{1,31})(?![\w/-])/g)) if (m[1] !== 'all' && SKILLS.exists(m[1]) && !out.includes(m[1])) out.push(m[1])
+  return out
+}
+
 /* ---------- Команды (клиент и агенты) ---------- */
 
 const err = (m) => { throw new Error(m) }
@@ -688,7 +772,7 @@ function sendMessage(actor, channelId, text, { threadOf, attachments, depth = 0 
   const peer = ch.kind === 'dm' ? ch.members.find((m) => m !== actor) : null
   if (peer && peer !== actor && acc(peer)?.blocked.includes(actor)) err(tr('Вам не отвечают: вы заблокированы'))
   if (peer && actor !== 'me' && acc(actor).blocked.includes(peer)) err(tr('Вы заблокировали этого участника'))
-  const msg = addMsg({ channelId, authorId: actor, text: t, threadOf, attachments })
+  const msg = addMsg({ channelId, authorId: actor, text: t, threadOf, attachments, refs: computeRefs(t, actor) })
   routeMessage(msg, depth)
   return msg
 }
@@ -720,7 +804,7 @@ export const commands = {
     // Для имён lead, dev, tester, research без описания берём готовую роль
     const preset = !String(a.role ?? '').trim() ? PR.ROLES[n] : null
     const role = preset?.role ?? (String(a.role ?? '').trim() || 'Новый бот.')
-    const b = { id: n, name: n, role, color: COLORS[S.bots.length % COLORS.length], model: validModel(a.model) ? a.model : (DEFAULT_MODEL[n] ?? 'sonnet'), effort: EFFORTS.includes(a.effort) ? a.effort : 'default', boss: n === 'lead' && !S.bots.some((x) => x.boss), schedule: [], runsToday: 0, runsDay: '', costToday: 0, sleeping: true }
+    const b = { id: n, name: n, role, color: COLORS[S.bots.length % COLORS.length], model: validModel(a.model) ? a.model : (DEFAULT_MODEL[n] ?? 'sonnet'), effort: EFFORTS.includes(a.effort) ? a.effort : 'default', boss: n === 'lead' && !S.bots.some((x) => x.boss), schedule: [], runsToday: 0, runsDay: '', costToday: 0, sleeping: true, mcp: [], skills: [] }
     S.bots.push(b)
     ensureBotFiles(b, preset?.md ?? PR.roleTemplate(n, String(a.prompt ?? '').trim() || role))
     if (!b.boss) void ensureWorktree(WORKSPACE, join(botDir(n), 'repo'), baseBranch(n))
@@ -761,6 +845,8 @@ export const commands = {
     if (p.effort !== undefined) { if (!EFFORTS.includes(p.effort)) err(tr('Неизвестный уровень размышлений')); b.effort = p.effort }
     if (p.boss !== undefined) b.boss = !!p.boss
     for (const k of ['sleeping', 'schedule', 'role']) if (p[k] !== undefined) b[k] = p[k]
+    if (Array.isArray(p.mcp)) b.mcp = [...new Set(p.mcp.map(String))].filter((id) => MCP.get(id))
+    if (Array.isArray(p.skills)) b.skills = [...new Set(p.skills.map(String))].filter((n) => SKILLS.exists(n))
     persist()
     putBot(b.id, a.except) // эхо не отправляем автору правки
   },
@@ -829,26 +915,210 @@ export const commands = {
     const name = String(a.name ?? '').trim()
     if (!name) err(tr('Сначала введите название бота'))
     const desc = String(a.description ?? '').trim().slice(0, 600)
-    let opts = { cwd: DATA, configDir: CONFIG_DIR, model: 'haiku' }
-    if (!claudeLoggedIn()) {
-      const p = PROV.list().find((x) => x.models.length)
-      if (!p) err(tr('Нужен вход в Claude или свой эндпоинт: откройте «Подключения»'))
-      const m = p.models.find((x) => /haiku|mini|flash|small/i.test(x.id)) ?? p.models[0]
-      opts = { ...opts, model: m.id, env: envFor(p, m.id) }
-    }
+    const opts = lightRunOpts()
     const text = await runOnce({ ...opts, prompt: PR.generateRolePrompt(name, desc, getLang()) })
     return { prompt: text.replace(/^["«]|["»]$/g, '').trim() }
   },
   listRecent: () => ({ recent: recentView() }),
 
+  /* Сторонние MCP-серверы */
+  saveMcp: (actor, a) => {
+    const lines = (t) => Object.fromEntries(String(t ?? '').split(/\r?\n/).map((l) => /^\s*([^=:\s]+)\s*[=:]\s*(.*)$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2].trim()]))
+    const type = ['stdio', 'http', 'sse'].includes(a.type) ? a.type : 'stdio'
+    const args = typeof a.args === 'string' ? (a.args.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((x) => x.replace(/^["']|["']$/g, '')) : a.args
+    if (a.id) { MCP.update(a.id, { name: a.name, command: a.command, args, url: a.url, env: lines(a.env), headers: lines(a.headers), allBots: a.allBots }); emitTools(); return { id: a.id } }
+    const server = type === 'stdio' ? { type, command: String(a.command ?? '').trim(), args: args ?? [], env: lines(a.env), headers: {} } : { type, url: String(a.url ?? '').trim(), headers: lines(a.headers), env: {}, args: [] }
+    if (type === 'stdio' ? !server.command : !/^https?:\/\//i.test(server.url)) err(tr(type === 'stdio' ? 'Нужна команда запуска' : 'Нужен адрес сервера (http или https)'))
+    const x = MCP.add(a.name, server)
+    emitTools()
+    return { id: x.id }
+  },
+  deleteMcp: (actor, a) => {
+    MCP.remove(a.id)
+    for (const b of S.bots) if (b.mcp?.includes(a.id)) { b.mcp = b.mcp.filter((x) => x !== a.id); putBot(b.id) }
+    emitTools()
+  },
+  testMcp: async (actor, a) => {
+    const x = MCP.get(a.id) ?? err(tr('Нет такого MCP-сервера'))
+    try { return { ok: true, tools: await testServer(x) } } catch (e) { return { ok: false, error: e.message } }
+  },
+  // Находит настройки MCP у других агентов на этом компьютере (значения ключей не отдаются)
+  scanMcp: () => ({ found: scanMcp(ctx?.folder) }),
+  importMcp: (actor, a) => {
+    let items = []
+    if (a.text) items = parseMcpText(a.text, a.filename ?? '').map((x) => ({ ...x, source: 'import' }))
+    else {
+      const wanted = new Set(a.names ?? [])
+      const file = String(a.file ?? '')
+      const known = scanMcp(ctx?.folder).find((f) => f.file === file) ?? err(tr('Этот файл не из списка найденных'))
+      items = readMcpSource(known.file).filter((x) => !wanted.size || wanted.has(x.name)).map((x) => ({ ...x, source: known.source }))
+    }
+    let added = 0
+    for (const it of items) { const before = MCP.list().length; MCP.add(it.name, it.server, it.source); if (MCP.list().length > before) added++ }
+    emitTools()
+    return { added, total: items.length }
+  },
+
+  /* Навыки */
+  // Haiku придумывает навык по запросу: название, описание и инструкцию. Ничего не сохраняет, форму заполняет клиент.
+  generateSkill: async (actor, a) => {
+    const req = String(a.request ?? '').trim().slice(0, 1500)
+    if (!req) err(tr('Опишите, что должен уметь навык'))
+    const text = await runOnce({ ...lightRunOpts(), prompt: PR.generateSkillPrompt(req, getLang()) })
+    const j = /\{[\s\S]*\}/.exec(text)
+    let o = null
+    try { o = JSON.parse(j?.[0] ?? '') } catch { /* модель ответила не JSON */ }
+    if (!o?.body) err(tr('Не удалось придумать навык, попробуйте переформулировать запрос'))
+    return { name: String(o.name ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32), description: String(o.description ?? '').trim(), body: String(o.body).trim() }
+  },
+  getSkill: (actor, a) => SKILLS.get(a.name) ?? err(tr('Нет такого навыка')),
+  saveSkill: (actor, a) => {
+    const n = SKILLS.save(a.name, a.description, a.body, a.source)
+    emitTools()
+    return { name: n }
+  },
+  deleteSkill: (actor, a) => {
+    SKILLS.remove(a.name)
+    for (const b of S.bots) if (b.skills?.includes(a.name)) { b.skills = b.skills.filter((x) => x !== a.name); putBot(b.id) }
+    emitTools()
+  },
+  scanSkills: () => ({ found: scanSkills(ctx?.folder) }),
+  importSkills: (actor, a) => {
+    const known = scanSkills(ctx?.folder)
+    let added = 0
+    const names = []
+    for (const it of a.items ?? []) {
+      const c = known.find((k) => k.path === it.path) ?? err(tr('Этот файл не из списка найденных'))
+      if (c.kind === 'skill') names.push(SKILLS.importDir(c.path, c.source))
+      else {
+        const { body } = parseSkillMd(readFileSync(c.path, 'utf8'))
+        names.push(SKILLS.save(c.name, c.description, body, c.source))
+      }
+      added++
+    }
+    emitTools()
+    return { added, names }
+  },
+  // Включить MCP и навыки боту (id) или всем ботам ('*'); add: добавить к имеющимся, иначе заменить
+  setBotTools: (actor, a) => {
+    const targets = a.id === '*' ? S.bots : [bot(a.id) ?? err(tr('Нет такого бота'))]
+    for (const b of targets) {
+      for (const [field, valid] of [['mcp', (x) => MCP.get(x)], ['skills', (x) => SKILLS.exists(x)]]) {
+        if (!Array.isArray(a[field])) continue
+        const next = a.add ? [...(b[field] ?? []), ...a[field]] : a[field]
+        b[field] = [...new Set(next.map(String))].filter(valid)
+      }
+      putBot(b.id)
+    }
+    persist()
+  },
+
+  /* Файлы из сообщений: показать содержимое (текст), картинку или вложение */
+  openFile: (actor, a) => {
+    const m = S.messages.find((x) => x.id === a.msgId) ?? err(tr('Нет сообщения'))
+    const f = resolveFileRef(a.ref, m.authorId) ?? err(tr('Файл не найден или недоступен'))
+    const name = basename(f.real)
+    const kind = fileKind(f.real)
+    const rel = inside(f.real, realpathSync(WORKSPACE)) ? f.real.slice(realpathSync(WORKSPACE).length + 1).replaceAll('\\', '/') : f.real.replaceAll('\\', '/')
+    if (kind === 'text') {
+      const buf = readFileSync(f.real)
+      if (buf.subarray(0, 8000).includes(0)) { const att = attachFromPaths([f.real]).attachments[0]; return { kind: 'binary', name, path: rel, size: f.size, attachment: att } }
+      const LIM = 400_000
+      return { kind: 'text', name, path: rel, size: f.size, line: f.line, truncated: buf.length > LIM, text: buf.subarray(0, LIM).toString('utf8') }
+    }
+    const { attachments, bad } = attachFromPaths([f.real])
+    if (!attachments.length) err(bad.join(', '))
+    return { kind, name, path: rel, size: f.size, attachment: attachments[0] }
+  },
+
+  /* Импорт переписок из других ИИ */
+  scanChats: () => {
+    const root = join(homedir(), '.claude', 'projects')
+    const out = []
+    if (existsSync(root)) {
+      for (const d of readdirSync(root)) {
+        const dir = join(root, d)
+        let files = []
+        try { files = readdirSync(dir).filter((f) => f.endsWith('.jsonl')) } catch { continue }
+        for (const f of files) {
+          const p = join(dir, f)
+          let st = null
+          try { st = statSync(p) } catch { continue }
+          out.push({ path: p, mtime: st.mtimeMs, size: st.size, project: d })
+        }
+      }
+    }
+    out.sort((x, y) => y.mtime - x.mtime)
+    return { found: out.slice(0, 30).map((o) => {
+      let first = ''
+      try { const head = readFileSync(o.path, 'utf8').slice(0, 60_000); for (const l of head.split('\n')) { const j = JSON.parse(l); if (j.type === 'user' && !j.isMeta) { const c = j.message?.content; const t = typeof c === 'string' ? c : (c ?? []).map((b) => b.text ?? '').join(' '); if (t && !/^</.test(t.trim())) { first = t.trim().slice(0, 90); break } } } } catch { /* строка могла оборваться */ }
+      return { ...o, title: first || basename(o.path) }
+    }) }
+  },
+  previewChats: async (actor, a) => {
+    let text = a.text
+    let name = a.filename ?? ''
+    if (!text) {
+      const p = String(a.path ?? '').trim().replace(/^"|"$/g, '')
+      if (!p || !existsSync(p) || !statSync(p).isFile()) err(tr('Файл не найден'))
+      if (statSync(p).size > 300 * 1024 * 1024) err(tr('Файл больше 300 МБ'))
+      name = p
+      if (/\.zip$/i.test(p)) {
+        // экспорт ChatGPT и Claude.ai приходит архивом с conversations.json
+        const dir = join(tmpdir(), 'clawds-import-' + uid())
+        mkdirSync(dir, { recursive: true })
+        await new Promise((res, rej) => { const c = spawn('tar', ['-xf', p, '-C', dir], { windowsHide: true }); c.on('error', rej); c.on('close', (code) => (code === 0 ? res() : rej(new Error('tar ' + code)))) })
+        const found = [join(dir, 'conversations.json'), ...readdirSync(dir).map((f) => join(dir, f))].find((f) => /\.json$/i.test(f) && existsSync(f))
+        if (!found) err(tr('В архиве нет conversations.json'))
+        text = readFileSync(found, 'utf8')
+        rmSync(dir, { recursive: true, force: true })
+      } else text = readFileSync(p, 'utf8')
+    }
+    const r = parseChats(text, name)
+    chatCache = { key: uid(), ...r }
+    return { key: chatCache.key, format: r.format, conversations: r.conversations.map((c) => ({ id: c.id, title: c.title, count: c.messages.length, first: c.messages[0].text.slice(0, 120) })) }
+  },
+  importChat: (actor, a) => {
+    if (!chatCache || chatCache.key !== a.key) err(tr('Сначала выберите файл заново'))
+    const target = bot(a.botId) ?? S.bots.find((b) => !b.boss) ?? S.bots[0] ?? err(tr('Сначала создайте бота: импортированный чат продолжается с ним'))
+    const ids = new Set(a.ids ?? [])
+    const chosen = chatCache.conversations.filter((c) => ids.has(c.id))
+    if (!chosen.length) err(tr('Ничего не выбрано'))
+    let made = 0
+    for (const conv of chosen) {
+      const base = 'import-' + (conv.title.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'chat')
+      let name = base
+      let i = 2
+      while (chanByName(name)) name = base + '-' + i++
+      const c = { id: 'g-' + uid(), kind: 'channel', name, members: ['me', target.id] }
+      S.channels.push(c); putChannel(c)
+      let last = 0
+      for (const m of conv.messages) {
+        last = Math.max(last + 1, m.ts || 0)
+        addMsg({ channelId: c.id, authorId: m.role === 'user' ? 'me' : target.id, text: m.text, ts: last, imported: true })
+      }
+      made++
+    }
+    toast(tr('Импортировано разговоров: {n}', { n: made }))
+    return { made }
+  },
+
   /* Подключения */
   claudeLogin: async () => {
     if (loginWatch) return {}
     const cmdFile = join(ROOT, 'server', 'login.cmd')
-    spawn('cmd.exe', ['/c', 'start', '""', '"' + cmdFile + '"'], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true, windowsHide: false }).unref()
+    const before = credStamp()
+    const wasIn = claudeLoggedIn()
+    // «fresh»: выйти из старого входа перед новым, чтобы новый вход не путался со старым
+    spawn('cmd.exe', ['/c', 'start', '""', '"' + cmdFile + '"', wasIn ? 'fresh' : ''], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true, windowsHide: false }).unref()
     let n = 0
     loginWatch = setInterval(() => {
-      if (claudeLoggedIn() || ++n > 90) { clearInterval(loginWatch); loginWatch = null; if (claudeLoggedIn()) emit({ t: 'toast', text: 'Вход в Claude выполнен' }); emitConn() }
+      const done = credStamp() !== before && claudeLoggedIn()
+      if (done || ++n > 90) {
+        clearInterval(loginWatch); loginWatch = null
+        emit({ t: 'toast', text: done ? tr('Вход в Claude выполнен') : tr('Вход не завершён') })
+        emitConn()
+      }
     }, 2000)
     emitConn()
     return {}
@@ -1058,4 +1328,9 @@ export function agentCall(token, action, args, files = []) {
 export const getState = () => S
 
 // Команды, доступные без открытой сессии
-export const GLOBAL_COMMANDS = new Set(['setLang', 'claudeLogin', 'claudeStatus', 'saveProvider', 'refreshModels', 'deleteProvider', 'setModelLite', 'addModel', 'removeModel', 'generatePrompt', 'listRecent', 'inspectFolder', 'createSession', 'openSession', 'forgetSession'])
+export const GLOBAL_COMMANDS = new Set(['generateSkill', 'saveMcp', 'deleteMcp', 'testMcp', 'scanMcp', 'importMcp', 'getSkill', 'saveSkill', 'deleteSkill', 'scanSkills', 'importSkills', 'scanChats', 'previewChats', 'setLang', 'claudeLogin', 'claudeStatus', 'saveProvider', 'refreshModels', 'deleteProvider', 'setModelLite', 'addModel', 'removeModel', 'generatePrompt', 'listRecent', 'inspectFolder', 'createSession', 'openSession', 'forgetSession'])
+
+// Test hooks for automated routing-rule tests (issue #10).
+// Exposes the pure routing helpers so node:test can verify
+// notification tiers and loop protection without a running server.
+export const __routingTest__ = { isAll, parseMentions, tier1Allowed, handoffAllowed, tier1Log, handoffLog }
