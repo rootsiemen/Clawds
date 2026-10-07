@@ -81,6 +81,7 @@ export type Settings = {
   claudeInChrome: boolean
   maxParallel: number
   pauseAtPct: number
+  pauseAtPct5h: number
   maxChainDepth: number
   handoffPair: number // передач на пару ботов за окно, 0 = без ограничения
   handoffTotal: number
