@@ -15,6 +15,7 @@ const EN = {
   'Цепочка упоминаний оборвана: глубина больше {n}.': 'Mention chain cut off: depth exceeds {n}.',
   'Передача от {a} к {b} остановлена: лимит передач между ботами ({p} на пару и {t} всего за {w} мин). Лимит меняется в настройках.': 'Handoff from {a} to {b} stopped: bot handoff limit ({p} per pair and {t} in total per {w} min). You can change the limit in settings.',
   'Боты на паузе: недельная квота {pct}% достигла порога {th}%. Порог меняется в настройках.': 'Bots are paused: weekly quota {pct}% reached the {th}% threshold. You can change the threshold in settings.',
+  'Боты на паузе: 5-часовая квота {pct}% достигла порога {th}%. Порог меняется в настройках.': 'Bots are paused: 5-hour quota {pct}% reached the {th}% threshold. You can change the threshold in settings.',
   'Нет такого чата': 'No such chat',
   'Вы не участник этого чата': 'You are not a member of this chat',
   'Пустое сообщение': 'Empty message',
