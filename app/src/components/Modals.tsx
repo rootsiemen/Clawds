@@ -156,6 +156,7 @@ function SettingsModal() {
       <h3>{t('Ограничители')}</h3>
       <NumRow label={t('Одновременных ботов')} sub={t('Остальные ждут в очереди')} value={settings.maxParallel} min={1} max={32} onCommit={(v) => setSettings({ maxParallel: v })} />
       <NumRow label={t('Пауза ботов при недельной квоте, %')} sub={t('0 = не останавливать')} value={settings.pauseAtPct} min={0} max={100} onCommit={(v) => setSettings({ pauseAtPct: v })} />
+      <NumRow label={t('Пауза ботов при 5-часовой квоте, %')} sub={t('0 = не останавливать')} value={settings.pauseAtPct5h} min={0} max={100} onCommit={(v) => setSettings({ pauseAtPct5h: v })} />
       <NumRow label={t('Глубина цепочки «бот зовёт бота»')} sub={t('Сколько ботов подряд могут будить друг друга')} value={settings.maxChainDepth} min={1} max={50} onCommit={(v) => setSettings({ maxChainDepth: v })} />
       <h3>{t('Защита от петель между ботами')}</h3>
       <NumRow label={t('Передач на одну пару ботов')} sub={t('0 = без ограничения')} value={settings.handoffPair} min={0} max={500} onCommit={(v) => setSettings({ handoffPair: v })} />
