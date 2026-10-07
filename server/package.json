@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node dev.mjs",
-    "start:plain": "node index.mjs"
+    "start:plain": "node index.mjs",
+    "test": "node --test test-routing.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
