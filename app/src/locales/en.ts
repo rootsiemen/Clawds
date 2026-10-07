@@ -173,6 +173,7 @@ export const EN: Record<string, string> = {
   'Одновременных ботов': 'Concurrent bots',
   'Остальные ждут в очереди': 'The rest wait in a queue',
   'Пауза ботов при недельной квоте, %': 'Pause bots at weekly quota, %',
+  'Пауза ботов при 5-часовой квоте, %': 'Pause bots at 5-hour quota, %',
   '0 = не останавливать': '0 = never pause',
   'Глубина цепочки «бот зовёт бота»': 'Chain depth "bot calls bot"',
   'Сколько ботов подряд могут будить друг друга': 'How many bots in a row may wake each other',
