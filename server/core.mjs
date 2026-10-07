@@ -89,7 +89,7 @@ const emit = (ev, except) => listeners.forEach((fn) => fn(ev, except))
 
 // 0 у лимитов передач и /all значит «без ограничения»
 const DEFAULT_SETTINGS = {
-  fullAccess: true, computerUse: false, claudeInChrome: true, maxParallel: 3, pauseAtPct: 90, maxChainDepth: 2,
+  fullAccess: true, computerUse: false, claudeInChrome: true, maxParallel: 3, pauseAtPct: 90, pauseAtPct5h: 0, maxChainDepth: 2,
   handoffPair: 3, handoffTotal: 10, handoffWindow: 10, allCooldown: 10,
 }
 const emptyState = () => ({ bots: [], channels: [], messages: [], accounts: {}, sessions: {}, folders: [], settings: { ...DEFAULT_SETTINGS } })
@@ -552,9 +552,15 @@ export function runBot(job) {
     sysMsg(ch.id, tr('Передача от {a} к {b} остановлена: лимит передач между ботами ({p} на пару и {t} всего за {w} мин). Лимит меняется в настройках.', { a: nameOf(job.from), b: nameOf(b.id), p: S.settings.handoffPair || '∞', t: S.settings.handoffTotal || '∞', w: S.settings.handoffWindow }))
     return
   }
-  if (!isEp(b.model) && S.settings.pauseAtPct && quota.known && quota.sevenDay.pct >= S.settings.pauseAtPct) {
-    sysMsg(ch.id, tr('Боты на паузе: недельная квота {pct}% достигла порога {th}%. Порог меняется в настройках.', { pct: Math.round(quota.sevenDay.pct), th: S.settings.pauseAtPct }))
-    return
+  if (!isEp(b.model) && quota.known) {
+    if (S.settings.pauseAtPct && quota.sevenDay.pct >= S.settings.pauseAtPct) {
+      sysMsg(ch.id, tr('Боты на паузе: недельная квота {pct}% достигла порога {th}%. Порог меняется в настройках.', { pct: Math.round(quota.sevenDay.pct), th: S.settings.pauseAtPct }))
+      return
+    }
+    if (S.settings.pauseAtPct5h && quota.fiveHour.pct >= S.settings.pauseAtPct5h) {
+      sysMsg(ch.id, tr('Боты на паузе: 5-часовая квота {pct}% достигла порога {th}%. Порог меняется в настройках.', { pct: Math.round(quota.fiveHour.pct), th: S.settings.pauseAtPct5h }))
+      return
+    }
   }
   job.epoch = epoch
   return enqueue(b.id, () => doRun(b, ch, job))
