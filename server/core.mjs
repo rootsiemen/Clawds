@@ -10,7 +10,7 @@ import { createMcpStore, createSkillStore, seedBuiltins, parseMcpText, readMcpSo
 import { parseChats } from './lib/chatimport.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { createStore, fetchModels, envFor, parseEp, isEp } from './lib/providers.mjs'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { ensureRepo, workspaceInfo, setRemote, ensureWorktree, removeWorktree, deleteBranches, isGitRepo } from './lib/git.mjs'
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -777,6 +777,43 @@ function sendMessage(actor, channelId, text, { threadOf, attachments, depth = 0 
   return msg
 }
 
+// Есть ли программа в PATH (для выбора эмулятора терминала на Linux).
+const commandExists = (bin) => {
+  try {
+    return spawnSync('sh', ['-c', `command -v ${bin}`], { stdio: 'pipe' }).status === 0
+  } catch {
+    return false
+  }
+}
+
+// Открывает окно терминала со скриптом входа в Claude — отдельно для каждой ОС.
+// Windows-поведение не менялось: новое окно cmd с login.cmd.
+const openLoginTerminal = (arg) => {
+  const args = arg ? [arg] : []
+  if (process.platform === 'win32') {
+    const cmdFile = join(ROOT, 'server', 'login.cmd')
+    spawn('cmd.exe', ['/c', 'start', '""', `"${cmdFile}"`, ...args], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true, windowsHide: false }).unref()
+    return
+  }
+  const shFile = join(ROOT, 'server', 'login.sh')
+  const quoted = (s) => `'${s.replace(/'/g, `'\\''`)}'`
+  if (process.platform === 'darwin') {
+    // Новое окно Terminal.app, выполняющее скрипт.
+    const cmdLine = ['bash', shFile, ...args].map(quoted).join(' ')
+    const script = `tell application "Terminal" to do script ${JSON.stringify(cmdLine)}`
+    spawn('osascript', ['-e', script, '-e', 'tell application "Terminal" to activate'], { detached: true, stdio: 'ignore' }).unref()
+    return
+  }
+  // Linux/*BSD: первый найденный эмулятор терминала.
+  for (const [bin, flag] of [['x-terminal-emulator', '-e'], ['gnome-terminal', '--'], ['konsole', '-e'], ['xfce4-terminal', '-e'], ['xterm', '-e']]) {
+    if (!commandExists(bin)) continue
+    spawn(bin, [flag, 'bash', shFile, ...args], { detached: true, stdio: 'ignore' }).unref()
+    return
+  }
+  // Графического терминала нет (например, SSH): выполняем прямо здесь.
+  spawn('bash', [shFile, ...args], { stdio: 'inherit' })
+}
+
 export const commands = {
   send: (actor, a) => { sendMessage(actor, a.channelId, a.text, a); return {} },
   react: (actor, a) => {
@@ -1106,11 +1143,10 @@ export const commands = {
   /* Подключения */
   claudeLogin: async () => {
     if (loginWatch) return {}
-    const cmdFile = join(ROOT, 'server', 'login.cmd')
     const before = credStamp()
     const wasIn = claudeLoggedIn()
     // «fresh»: выйти из старого входа перед новым, чтобы новый вход не путался со старым
-    spawn('cmd.exe', ['/c', 'start', '""', '"' + cmdFile + '"', wasIn ? 'fresh' : ''], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true, windowsHide: false }).unref()
+    openLoginTerminal(wasIn ? 'fresh' : '')
     let n = 0
     loginWatch = setInterval(() => {
       const done = credStamp() !== before && claudeLoggedIn()
