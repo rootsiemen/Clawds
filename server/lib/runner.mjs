@@ -62,6 +62,8 @@ export function runClaude(opts, h) {
 
     child = spawn(CLAUDE, [...CLAUDE_PREFIX, ...args], {
       cwd: opts.cwd, env: cleanEnv(opts.env, opts.configDir), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      // POSIX: отдельная группа процессов, чтобы kill() гасил всё дерево, а не только claude
+      detached: process.platform !== 'win32',
     })
     child.stdin.end(opts.prompt)
 
@@ -123,7 +125,14 @@ export function runClaude(opts, h) {
   })
   const kill = () => {
     killed = true
-    if (child?.pid) spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+    if (!child?.pid) return
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+      return
+    }
+    // POSIX: отрицательный PID гасит всю группу процессов (дерево).
+    // Ребёнок запущен detached и возглавляет свою группу (см. выше).
+    try { process.kill(-child.pid, 'SIGKILL') } catch { /* уже завершён */ }
   }
   return { promise, kill }
 }
