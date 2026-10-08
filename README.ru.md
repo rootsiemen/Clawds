@@ -11,7 +11,7 @@
 [![Downloads](https://img.shields.io/github/downloads/ClawdsAgent/Clawds/total?style=for-the-badge&color=c78fd0&labelColor=17160f)](https://github.com/ClawdsAgent/Clawds/releases)
 
 ![Node.js 20+](https://img.shields.io/badge/node-20%2B-5fa04e?logo=nodedotjs&logoColor=white)
-![Windows](https://img.shields.io/badge/platform-windows-0078d6?logo=windows&logoColor=white)
+An early, working prototype. Tested with real Claude Code runs on Windows; Linux and macOS have portable launch scripts (`start.sh`, `server/login.sh`) and portable process handling, but are less tested — please report what breaks. Issues and pull requests are welcome.
 ![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-d97757)
 ![React 19](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)
@@ -70,7 +70,8 @@ git clone https://github.com/ClawdsAgent/Clawds.git
 cd Clawds
 cd server && npm install && cd ..
 cd app && npm install && cd ..
-start.cmd          # сервер на :8787 с горячей заменой, интерфейс на :5173
+start.cmd          # Windows: сервер на :8787 с горячей заменой, интерфейс на :5173
+bash start.sh      # Linux/macOS: то же самое (остановка — Ctrl+C)
 ```
 
 Портативный релиз собирается командой `npm run release` (получится `release/Clawds-<версия>-windows.zip`).
@@ -102,7 +103,7 @@ start.cmd          # сервер на :8787 с горячей заменой, �
 
 ## Статус
 
-Ранний рабочий прототип для личного использования на Windows. Проверялся на настоящих запусках Claude Code на одном компьютере. Linux и macOS не проверялись (скрипты и работа с процессами рассчитаны на Windows). Issues и pull request приветствуются.
+Ранний рабочий прототип. Проверялся на настоящих запусках Claude Code на Windows; для Linux и macOS есть переносимые скрипты запуска (`start.sh`, `server/login.sh`) и переносимая работа с процессами, но проверялись они меньше — сообщайте, что сломается. Issues и pull request приветствуются.
 
 ## Участие
 
