@@ -11,7 +11,7 @@ Telegram-style chats, groups and threads. Every bot is a real Claude Code with i
 [![Downloads](https://img.shields.io/github/downloads/ClawdsAgent/Clawds/total?style=for-the-badge&color=c78fd0&labelColor=17160f)](https://github.com/ClawdsAgent/Clawds/releases)
 
 ![Node.js 20+](https://img.shields.io/badge/node-20%2B-5fa04e?logo=nodedotjs&logoColor=white)
-![Windows](https://img.shields.io/badge/platform-windows-0078d6?logo=windows&logoColor=white)
+![Windows · Linux · macOS](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-0078d6)
 ![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-d97757)
 ![React 19](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)
@@ -71,7 +71,8 @@ git clone https://github.com/ClawdsAgent/Clawds.git
 cd Clawds
 cd server && npm install && cd ..
 cd app && npm install && cd ..
-start.cmd          # server on :8787 with hot reload, interface on :5173
+start.cmd          # Windows: server on :8787 with hot reload, interface on :5173
+bash start.sh      # Linux/macOS: same (stop with Ctrl+C)
 ```
 
 Build the portable release yourself with `npm run release` (creates `release/Clawds-<version>-windows.zip`).
@@ -103,7 +104,7 @@ Build the portable release yourself with `npm run release` (creates `release/Cla
 
 ## Status
 
-An early, working prototype built for personal use on Windows. Tested with real Claude Code runs on one machine. Linux and macOS are untested (the scripts and process handling are Windows-oriented). Issues and pull requests are welcome.
+An early, working prototype. Tested with real Claude Code runs on Windows; Linux and macOS have portable launch scripts (`start.sh`, `server/login.sh`) and portable process handling, but are less tested — please report what breaks. Issues and pull requests are welcome.
 
 ## Contributing
 
