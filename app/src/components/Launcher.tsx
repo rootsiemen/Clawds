@@ -4,7 +4,7 @@ import { useStore } from '../store'
 import type { RecentSession } from '../types'
 import { fmtAgo, folderName } from './ui'
 import Connections, { LoginBar } from './Connections'
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 
 export default function Launcher() {
   const { recent, inspectFolder, createSession, openSession, forgetSession, modal, setModal, conn, lang, setLang } = useStore()
@@ -38,7 +38,7 @@ export default function Launcher() {
   return (
     <div className="launcher">
       <div className="launch-card">
-        <div className="lang-corner"><select value={lang} onChange={(e) => setLang(e.target.value as 'ru' | 'en')} aria-label="Language"><option value="ru">Русский</option><option value="en">English</option></select></div>
+        <div className="lang-corner"><select value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label="Language"><option value="ru">Русский</option><option value="en">English</option><option value="es">Español</option></select></div>
         <LoginBar />
         <div className="brand"><span className="dots big"><u /><u /><u /></span><h1>Clawds</h1></div>
         <p className="lead-text">{t('Откройте папку проекта. Боты будут работать в ней. У каждой папки свои сессии с отдельными ботами и группами.')}</p>

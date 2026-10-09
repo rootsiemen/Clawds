@@ -6,7 +6,7 @@ import { AccountModal, AccountsModal, ProfileModal } from './Accounts'
 import { EffortSelect, ModelSelect } from './ModelPick'
 import Connections, { LoginBar } from './Connections'
 import Tools from './Tools'
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 
 function CreateBot() {
   const { createBot, generatePrompt, setModal, bots } = useStore()
@@ -119,9 +119,10 @@ function LangRow() {
   return (
     <div className="set-row">
       <div><b>{t('Язык интерфейса')}</b><div className="sub">{t('Боты тоже будут отвечать на этом языке')}</div></div>
-      <select value={lang} onChange={(e) => setLang(e.target.value as 'ru' | 'en')}>
+      <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}>
         <option value="ru">Русский</option>
         <option value="en">English</option>
+        <option value="es">Español</option>
       </select>
     </div>
   )

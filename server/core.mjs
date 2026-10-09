@@ -469,7 +469,12 @@ const botInfo = (b) => ({
 })
 
 // Язык ответов задаёт интерфейс; правила на русском, но пишут боты на выбранном языке
-const langLine = () => (getLang() === 'en' ? 'LANGUAGE: write every chat message, report and file note in English, even though these rules are in Russian. The human uses an English interface.' : 'ЯЗЫК: пиши сообщения по-русски.')
+const langLine = () => {
+  const l = getLang()
+  if (l === 'en') return 'LANGUAGE: write every chat message, report and file note in English, even though these rules are in Russian. The human uses an English interface.'
+  if (l === 'es') return 'IDIOMA: escribe cada mensaje del chat, informe y nota de archivo en español, aunque estas reglas estén en ruso. La persona usa una interfaz en español.'
+  return 'ЯЗЫК: пиши сообщения по-русски.'
+}
 
 function buildPrompt(b, ch, job, lite = false) {
   const roster = S.bots.filter((x) => x.id !== b.id).map((x) => '@' + acc(x.id).username + ' (' + x.role + ')').join('; ')
@@ -492,7 +497,7 @@ function buildPrompt(b, ch, job, lite = false) {
     return job.trigger ? headLite + skillsNote + askedNote + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : headLite + skillsNote + askedNote
   }
   // Динамические сведения кладём в сам запуск: системная инструкция у возобновляемой сессии (--resume) не обновляется
-  const head = '[Clawds. Сейчас ' + new Date().toLocaleString(getLang() === 'en' ? 'en-US' : 'ru-RU') + ']\n' + langLine() + '\n' + PR.identityLines(botInfo(b)).join('\n') + '\nГде ты: ' + where + '\nДругие боты: ' + (roster || 'нет') + '\nЧТО ОТ ТЕБЯ НУЖНО: ' + task
+  const head = '[Clawds. Сейчас ' + new Date().toLocaleString(getLang() === 'es' ? 'es-ES' : getLang() === 'en' ? 'en-US' : 'ru-RU') + ']\n' + langLine() + '\n' + PR.identityLines(botInfo(b)).join('\n') + '\nГде ты: ' + where + '\nДругие боты: ' + (roster || 'нет') + '\nЧТО ОТ ТЕБЯ НУЖНО: ' + task
   return job.trigger ? head + askedNote + '\n\nПереписка (новое в конце):\n' + lines.join('\n') : head + askedNote
 }
 

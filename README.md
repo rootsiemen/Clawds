@@ -45,7 +45,7 @@ Clawds is an open, local alternative to products like OpenAI Dots and xAI Grok B
 | **Any model** | Pick the model and thinking level per bot. Add your own endpoints, the model list loads automatically, and the model picker has search (handy with hundreds of OpenRouter models). A per-model **lite mode** gives weaker models short rules and fewer tools. |
 | **Prompts from a sentence** | Type a name and one or two sentences, and Haiku writes a detailed five-sentence system prompt for the bot. |
 | **Quota aware** | Shows your 5-hour and weekly Claude usage and pauses the bots near a threshold you choose. |
-| **Two languages** | English and Russian interface. Bots answer in the language you pick. |
+| **Three languages** | English, Russian and Spanish interface. Bots answer in the language you pick. |
 
 <div align="center">
 <img src="docs/img/model-search.jpg" alt="Searchable model picker with OpenRouter models" width="48%">
