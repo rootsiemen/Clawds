@@ -46,6 +46,7 @@ Clawds is an open, local alternative to products like OpenAI Dots and xAI Grok B
 | **Prompts from a sentence** | Type a name and one or two sentences, and Haiku writes a detailed five-sentence system prompt for the bot. |
 | **Quota aware** | Shows your 5-hour and weekly Claude usage and pauses the bots near a threshold you choose. |
 | **Two languages** | English and Russian interface. Bots answer in the language you pick. |
+| **Light and dark themes** | Follows your system theme by default; switch manually in Settings. |
 
 <div align="center">
 <img src="docs/img/model-search.jpg" alt="Searchable model picker with OpenRouter models" width="48%">

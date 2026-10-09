@@ -7,6 +7,7 @@ import { EffortSelect, ModelSelect } from './ModelPick'
 import Connections, { LoginBar } from './Connections'
 import Tools from './Tools'
 import { t } from '../i18n'
+import { getTheme, setThemeValue, type Theme } from '../theme'
 
 function CreateBot() {
   const { createBot, generatePrompt, setModal, bots } = useStore()
@@ -127,6 +128,20 @@ function LangRow() {
   )
 }
 
+function ThemeRow() {
+  const [theme, setTheme] = useState<Theme>(getTheme())
+  return (
+    <div className="set-row">
+      <div><b>{t('Тема оформления')}</b></div>
+      <select value={theme} onChange={(e) => { const v = e.target.value as Theme; setThemeValue(v); setTheme(v) }}>
+        <option value="auto">{t('Системная')}</option>
+        <option value="dark">{t('Тёмная')}</option>
+        <option value="light">{t('Светлая')}</option>
+      </select>
+    </div>
+  )
+}
+
 function SettingsModal() {
   const { quota, settings, setSettings, setModal, bots, stopAll } = useStore()
   const total = bots.reduce((a, b) => a + b.runsToday, 0) || 1
@@ -138,6 +153,7 @@ function SettingsModal() {
       <button className="btn" onClick={() => setModal('tools')}>{t('Инструменты и навыки: MCP, импорт из других агентов')}</button>
       <button className="btn danger" onClick={stopAll}>{t('Остановить всех ботов')}</button>
       <LangRow />
+      <ThemeRow />
       <h3>{t('Квота Claude')}</h3>
       <Bar label={t('5-часовое окно')} pct={quota.fiveHour.pct} reset={quota.fiveHour.resetsAt} />
       <Bar label={t('Недельный лимит')} pct={quota.sevenDay.pct} reset={quota.sevenDay.resetsAt} />
